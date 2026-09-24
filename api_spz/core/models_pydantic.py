@@ -25,7 +25,13 @@ class GenerationArgForm:
         tex_rescale_t: float = Form(3.0),
         tex_guidance_strength: float = Form(1.0),
         output_format: str = Form("glb"),
+        chroma_key: str = Form(""),          # '' | 'auto' | '#rrggbb' -> flat background becomes alpha
+        chroma_tolerance: int = Form(24),    # RGB distance counted as background
+        chroma_shadows: bool = Form(True),   # also key the subject's shadow on the backdrop
     ):
+        self.chroma_key = chroma_key.strip().lower()
+        self.chroma_tolerance = chroma_tolerance
+        self.chroma_shadows = chroma_shadows
         self.seed = seed
         self.guidance_scale = guidance_scale
         self.num_inference_steps = num_inference_steps
