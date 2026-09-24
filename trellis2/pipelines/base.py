@@ -39,7 +39,13 @@ class Pipeline:
             args = json.load(f)['args']
 
         _models = {}
+        # TRELLIS_MAX_RESOLUTION=512 skips the two 1024 flow models - ~5.2 GB of RAM that
+        # the 512 pipeline never touches (a 1024 request then fails with a clear error).
+        _max_res = int(os.environ.get('TRELLIS_MAX_RESOLUTION', '0') or 0)
         for k, v in args['models'].items():
+            if 0 < _max_res < 1024 and k.endswith('_1024'):
+                print(f"[INIT] skipping {k}: TRELLIS_MAX_RESOLUTION={_max_res}")
+                continue
             try:
                 _models[k] = models.from_pretrained(f"{path}/{v}")
             except Exception as e:
