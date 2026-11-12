@@ -1,3 +1,37 @@
+# TRELLIS.2, light on system RAM
+
+A fork of [IgorAherne's TRELLIS.2 for StableProjectorz](https://github.com/IgorAherne/TRELLIS.2-stableprojectorz),
+which already fits TRELLIS.2 onto 8 GB GPUs. Its low-VRAM mode moves each model to the GPU
+only for its own stage, so the rest wait in system RAM. On a 32 GB Windows desktop that was
+enough to exhaust the memory limit, and other apps (Chrome, games, VMs) crashed "out of
+memory" mid-generation. This fork cuts TRELLIS.2's share to almost nothing at rest and
+roughly half at its peak. It produces the same weights, bit for bit, and generations take
+2-4 % longer.
+
+How: models are built without the throwaway fp32 copy (lean loading). Each stage reuses its
+CPU weights instead of re-allocating them. The weights stay read-only memory maps of their
+files, which Windows can drop under pressure without touching the pagefile. And PyTorch's
+allocator returns freed memory (`MIMALLOC_PURGE_DELAY=0`). All of it is on by default, and
+each part can be switched off. Run `python make_fp16_twins.py` once (~12 GB of disk) so the
+bf16 flow models can be mapped too. Details are under **Lower System-RAM Use** below, next to
+an optional commercial-use path that leaves out nvdiffrast and RMBG-2.0.
+
+| Windows 11, RTX 3060 Ti 8 GB, 32 GB RAM | Before | This fork |
+|---|---|---|
+| At rest | ~24 GB (512 models only) | **1.7 GB** (every model loaded) |
+| Peak, 512 generation | 25+ GB, climbing every stage | **11.7 GB** |
+| Peak, 1024 / 1536 generation | 33.4 / 34.9 GB\* | **14.6 / 18.9 GB** |
+| Whole-system commit, peak | 55.1 GB\* | **39.2 GB** |
+
+<sup>Private memory, the part that counts against Windows' memory limit. \*Measured with
+this fork's first round of fixes already in; the original was not measured at those
+resolutions.</sup>
+
+## IgorAherne's StableProjectorz build
+
+<sup>This fork builds on [IgorAherne/TRELLIS.2-stableprojectorz](https://github.com/IgorAherne/TRELLIS.2-stableprojectorz).
+Igor's notes, unchanged:</sup>
+
 A One-click installer for Windows: [(Python 3.11, Cuda 12.8, Torch 2.8)](https://github.com/IgorAherne/TRELLIS.2-stableprojectorz/releases/tag/latest)
 
 Repository for integration with the [StableProjectorz](https://stableprojectorz.com/), a free AI-texturing tool.<br>
