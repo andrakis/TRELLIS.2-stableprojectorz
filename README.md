@@ -27,6 +27,31 @@ an optional commercial-use path that leaves out nvdiffrast and RMBG-2.0.
 this fork's first round of fixes already in; the original was not measured at those
 resolutions.</sup>
 
+## Texturing an existing mesh (Microsoft's shape-conditioned PBR pipeline)
+
+Microsoft released TRELLIS.2's texturing pipeline after Igor's fork was taken
+(`Trellis2TexturingPipeline`, upstream 903bfcf). Give it a mesh and a picture, and it paints
+base colour, metallic and roughness for that mesh. This fork carries it, adapted:
+
+- **`POST /texture_no_preview`** on the API server: `mesh` (a .glb) + `file` (the
+  picture), plus `seed`, `resolution` (512 | 1024), `texture_size` (0 keeps each map's
+  size) and `uv_mode` (auto | keep | new). Poll `/status`, then `GET /download/model`, as
+  for a generation. You get **the same GLB back with new maps**. The meshes, UVs, skins,
+  animations and normal maps are kept (`trellis2/utils/glb_retexture.py`), so a rigged
+  character stays rigged. Layouts that cannot hold a bake (stacked palette UVs, none, or
+  under 15% of the map in use) are unwrapped afresh, and skin weights follow the split
+  vertices.
+- **Low memory:** it is built on first use from the loaded image-to-3D pipeline and shares
+  its texture models and DINOv3; only the 0.7 GB shape encoder is new. 22-43 s at 1024 on
+  an RTX 3060 Ti, 2.8-3.7 GB VRAM peak.
+- **Commercial path:** the bake uses the pure-PyTorch `uvraster`, and `TRELLIS_NO_REMBG=1`
+  applies, as below.
+- `example_texturing.py` / `app_texturing.py` are upstream's examples (`pipeline.run`,
+  trimesh in and out).
+- Two fixes it needed: the sparse VAE decoder keeps the encoder's subdivision cache when it
+  decodes unguided, and the flex_gemm conv no longer loses a dimension when it bounces a big
+  tensor through the CPU.
+
 ## IgorAherne's StableProjectorz build
 
 <sup>This fork builds on [IgorAherne/TRELLIS.2-stableprojectorz](https://github.com/IgorAherne/TRELLIS.2-stableprojectorz).
@@ -106,7 +131,7 @@ Data processing is streamlined for instant conversions that are fully **renderin
 - [x] Release image-to-3D inference code
 - [x] Release pretrained checkpoints (4B)
 - [x] Hugging Face Spaces demo
-- [ ] Release shape-conditioned texture generation inference code (Current schdule: before 12/24/2025)
+- [x] Release shape-conditioned texture generation inference code
 - [ ] Release training code (Current schdule: before 12/31/2025)
 
 
@@ -241,7 +266,7 @@ Then, you can access the demo at the address shown in the terminal.
 
 ### 2. PBR Texture Generation
 
-Will be released soon. Please stay tuned!
+Please refer to the [example_texturing.py](example_texturing.py) for an example of how to generate PBR textures for a given 3D shape. Also, you can use the [app_texturing.py](app_texturing.py) to run a web demo for PBR texture generation.
 
 ## 🧩 Related Packages
 

@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import the StableProjectorz API routes
 from api_spz.routes.generation import router as generation_router
+from api_spz.routes.texturing import router as texturing_router
 from api_spz.core.state_manage import state
 
 # Set up logging
@@ -101,6 +102,7 @@ app.add_middleware(
 
 # Include the generation routes
 app.include_router(generation_router)
+app.include_router(texturing_router)  # shape-conditioned PBR texturing (/texture_no_preview)
 
 @app.get("/")
 async def root():
