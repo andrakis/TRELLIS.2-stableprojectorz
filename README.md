@@ -221,6 +221,96 @@ TRELLIS.2 is built upon several specialized high-performance packages developed 
     CUDA-accelerated mesh utilities used for high-speed post-processing, remeshing, decimation, and UV-unwrapping.
 
 
+## 🏷️ Commercial Use Without the Non-Commercial Components
+
+Two components on the image → GLB path carry non-commercial licences:
+
+- **nvdiffrast** (NVIDIA Source Code License, research / evaluation use only) is the UV
+  rasteriser in the texture bake (`o_voxel.postprocess.to_glb`).
+- **RMBG-2.0** (CC BY-NC 4.0) removes the background of an input image without alpha.
+
+Both can now be left out. **The defaults are unchanged**, so nothing differs unless you opt in:
+
+| Setting | Effect |
+|---|---|
+| `TRELLIS_UV_RASTERIZER=torch` | Bakes textures with `o-voxel/o_voxel/uvraster.py`, a pure-PyTorch (MIT) UV rasteriser; nvdiffrast is never imported. `auto` (default) uses nvdiffrast when it is installed and falls back to `uvraster` when it is not; `nvdiffrast` requires it. |
+| `TRELLIS_NO_REMBG=1` | RMBG-2.0 is never loaded. Input images must then carry an alpha channel, or use `chroma_key` below. |
+| API form fields `chroma_key`, `chroma_tolerance`, `chroma_shadows` | On `/generate_no_preview` (and the multi-image variant). `chroma_key` is `''` (off, default), `'auto'` (background colour = median of the image border) or `'#rrggbb'`. Background-coloured pixels connected to the image border become transparent, so the pipeline takes its alpha path and never needs background removal. `chroma_tolerance` (default 24) is the RGB distance counted as background. `chroma_shadows` (default true) also keys the subject's shadow on the backdrop, which otherwise survives as a floor slab under the model. |
+
+`uvraster` reproduces nvdiffrast's texel conventions as measured with a single-triangle
+probe: texel `(r, c)` is sampled at `((c + 0.5) / N, (r + 0.5) / N)`, and row 0 is `v = 0`.
+Compared against nvdiffrast on real bakes, it gives identical texel coverage and at most a
+2e-5 difference in surface position, so the exported GLB has the same mesh and UVs.
+
+Not covered here: `trellis2/renderers` (preview rendering in `app.py` / `example.py`) still
+uses nvdiffrast / nvdiffrec, and the model weights (TRELLIS.2, DINOv3) have their own
+licences on their model cards. Check those for your use case.
+
+## 🧠 Lower System-RAM Use
+
+Low-VRAM mode keeps every sub-model in system RAM and moves each one to the GPU only for its
+own stage, so on an 8 GB card, system RAM becomes the limit. Three changes bring it down.
+Measured on Windows 11, RTX 3060 Ti (8 GB), 32 GB RAM, 512 pipeline:
+
+| | Before | After |
+|---|---|---|
+| At rest (working set / private memory) | ~14 / ~24 GB | ~10 / ~14 GB |
+| During a generation (private memory) | 25+ GB, growing with each stage | ~18 GB peak, flat across jobs |
+
+- **Lean model loading** (on by default; `TRELLIS_LEAN_LOAD=0` turns it off). The original
+  loader builds every weight in fp32, converts it to half precision, then loads a second
+  full copy from the checkpoint. PyTorch's Windows allocator (mimalloc) keeps the freed fp32
+  memory committed, so each model held about twice its real size. Models are now built on
+  the meta device (buffers and RoPE tables are still built for real) and the checkpoint
+  tensors are assigned directly, cast to the dtype the model expects. Every parameter,
+  buffer and tensor attribute of all six models used by the 512 pipeline was hashed under
+  both loaders: they are bit-identical. Anything unexpected falls back to the original loader.
+- **Keep CPU weights across GPU round trips** (on by default in low-VRAM mode;
+  `TRELLIS_KEEP_CPU_WEIGHTS=0` turns it off). Each stage's `.cpu()` allocated a fresh CPU
+  copy of the model while the old memory stayed committed. Weights never change at
+  inference time, so each model's CPU tensors are kept, and `.cpu()` points the parameters
+  back at them. That removes the reallocation, and the copy back becomes instant.
+- **`TRELLIS_MAX_RESOLUTION=512`** (opt-in) skips loading the two 1024 flow models (~5.2 GB)
+  on machines that only serve 512. A 1024 request then fails with a clear error.
+
+Two further changes keep the weights out of RAM almost entirely. Same machine, every model
+loaded (512, 1024 and 1536 pipelines), same image and seed, 12 steps, 2K texture:
+
+| | Before | After |
+|---|---|---|
+| At rest (private memory) | 20.3 GB | **1.7 GB** |
+| Peak during a generation, 512 / 1024 / 1536 (private) | 27.6 / 33.4 / 34.9 GB | **11.7 / 14.6 / 18.9 GB** |
+| System commit peak | 55.1 GB | **39.2 GB** |
+| Generation time, 512 / 1024 / 1536 | 50 / 156 / 399 s | 52 / 159 / 412 s |
+
+- **Weights stay in their files** (on by default; `TRELLIS_MMAP_WEIGHTS=0` turns it off).
+  On a local disk, every weight is a read-only memory map of its checkpoint instead of a
+  copy in RAM. Windows charges read-only file pages nothing against the commit limit (the
+  limit other apps hit when they fail "out of memory"): under pressure it drops them and
+  reads them back from disk the next time a stage moves that model to the GPU. (safetensors'
+  own mapping is charged in full on Windows, so the loader maps the file itself.) Files on a
+  network share are still copied. DINOv3 is mapped the same way once transformers has
+  loaded it.
+- **fp16 twins of the bf16 flow models.** The five flow models are bf16 on disk and the
+  pipeline converts them to fp16, which would copy them anyway. Run once, from the repo root
+  with the venv active:
+
+  ```
+  python make_fp16_twins.py           # ~12 GB of disk; --remove deletes them
+  ```
+
+  It writes `<name>.fp16.safetensors` beside each checkpoint: the weights exactly as the
+  pipeline held them in RAM before. All 4,266 tensors hash identically under both loaders.
+  A twin is ignored if its checkpoint changes. Without twins, the flow models are copied
+  into RAM as before.
+- **mimalloc returns freed memory.** `main_api.py` and `app.py` set
+  `MIMALLOC_PURGE_DELAY=0` (unless it is already set) before torch loads; by default
+  PyTorch's Windows allocator keeps freed memory committed.
+
+The weights still show in the process's working set during a generation, but as file-backed
+pages the OS can drop at no cost. The views are read-only: an in-place write to a weight
+would be an access violation.
+
 ## ⚖️ License
 
 This model and code are released under the **[MIT License](LICENSE)**.
